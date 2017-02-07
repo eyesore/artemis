@@ -1,0 +1,13 @@
+{
+	"comment": "",
+	"ignore": "test",
+	"package": [
+		{
+			"checksumSHA1": "++qMWbJ7ptiXehuLTFtEDGGnwpM=",
+			"path": "github.com/gorilla/websocket",
+			"revision": "c36f2fe5c330f0ac404b616b96c438b8616b1aaf",
+			"revisionTime": "2017-01-26T19:14:27Z"
+		}
+	],
+	"rootPath": "github.com/eyesore/artemis"
+}

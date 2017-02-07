@@ -41,16 +41,17 @@ func (f *Family) OnMessage(kind string, do Action) {
 }
 
 // OffMessage implements MessageListener
-func (f *Family) OffMessage(kind string) {
-	delete(f.messageSubscriptions, kind)
+func (f *Family) OffMessage(kind string, do Action) {
+	if actions, ok := f.messageSubscriptions[kind]; ok {
+		actions.Remove(do)
+	}
 	for _, c := range f.Clients {
-		c.OffMessage(kind)
+		c.OffMessage(kind, do)
 	}
 }
 
 // OnEvent implements EventResponder
 func (f *Family) OnEvent(kind string, do Action) {
-	f.OffEvent(kind)
 	f.eventSubscriptions[kind].Add(do)
 	for _, c := range f.Clients {
 		c.OnEvent(kind, do)
@@ -66,14 +67,17 @@ func (f *Family) OffEvent(kind string) {
 }
 
 // PushMessage implements MessagePusher
-func (f *Family) PushMessage(m []byte) {
-
+func (f *Family) PushMessage(m []byte, messageType int) {
+	for _, c := range f.Clients {
+		c.PushMessage(m, messageType)
+	}
 }
 
 func (f *Family) add(c *Client) {
 	// don't do anything if the client already exists here
-	// TODO - this being silent is probably not OK - log to info
+	// TODO separate channel for errors that aren't that important (sic)
 	if _, ok := f.Clients[c.ID]; ok {
+		Errors <- ErrDuplicateClient
 		return
 	}
 

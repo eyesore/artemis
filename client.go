@@ -13,10 +13,16 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// TODO some of these can go in artemis.go
 var (
 	// DefaultTextParser can be overridden to implement text parsing for Client without
 	// providing a custom parser
 	DefaultTextParser = ParseJSONMessage
+
+	// Timeout is the time allowed to write messages
+	Timeout     = 10 * time.Second
+	pongTimeout = Timeout * 6
+	pingPeriod  = (pongTimeout * 9) / 10
 
 	// Default WS configs - can be set at package level
 	// TODO, update for multiple protocols
@@ -24,8 +30,15 @@ var (
 	HandshakeTimeout                      = 10 * time.Second
 	ReadBufferSize, WriteBufferSize int
 
+	// Errors sends errors encountered during send and receive and is meant to be consumed by a logger
+	// TODO provide default logger to stdout
+	Errors = make(chan error)
+
 	// ErrHubMismatch occurs when trying to add a client to family with a different hub.
 	ErrHubMismatch = errors.New("Unable to add a client to a family in a different hub.")
+
+	// ErrDuplicateClient occurs when a client ID matches an existing client ID in the family on join.
+	ErrDuplicateClient = errors.New("Tried to add a duplicate client to family.")
 
 	// ErrAlreadySubscribed occurs when trying to add an event handler to a Responder that already has one.
 	ErrAlreadySubscribed = errors.New("Trying to add duplicate event to responder.")
@@ -37,91 +50,32 @@ var (
 	// in response to the same message
 	ErrDuplicateAction = errors.New("Unable to add that action again for the same message name.")
 
+	ErrIllegalPingTimeout = errors.New("pingPeriod must be shorter than pongTimeout")
+
 	errNotYetImplemented = errors.New("You are trying to use a feature that has not been implemented yet.")
 )
 
 // TODO support multiple socket protocols
 
-// MessageParser parses byte streams into MessageDataGetters
-type MessageParser interface {
-	ParseText([]byte) (MessageDataGetter, error)
-	ParseBinary([]byte) (MessageDataGetter, error)
-}
-
-// MessageListener manages the susbscriptions of one or more MessageResponders
-type MessageListener interface {
-	OnMessage(string, Action)
-	OffMessage(string)
-}
-
-// MessageResponder can respond to a received message by doing an Action
-type MessageResponder interface {
-	MessageListener
-	// Client returns the client that received the message being responded to.
-	// All message responders must have some way of keeping track of which client received the message,
-	// in order to pass it to Action
-	Client() *Client
-	MessageRespond(MessageDataGetter)
-}
-
-// MessageParseResponder handles incoming messages, and is also capable of parsing them.
-type MessageParseResponder interface {
-	MessageParser
-	MessageResponder
-}
-
-// MessagePusher can send a message over an existing WS connection
-type MessagePusher interface {
-	PushMessage([]byte)
-}
-
-// MessageDataGetter is a DataGetter that also exposes the raw message from the client, and has a Name
-type MessageDataGetter interface {
-	DataGetter
-	Raw() []byte
-	Name() string
-}
-
-// Message is a basic implementation of MessageDataGetter.
-type Message struct {
-	name string
-	data interface{}
-	raw  []byte
-}
-
-func (m *Message) Data() interface{} {
-	return m.data
-}
-
-func (m *Message) Raw() []byte {
-	return m.raw
-}
-
-func (m *Message) Name() string {
-	return m.name
-}
-
-// Action is a function that is executed in response to an event or message.
-type Action func(*Client, DataGetter)
-
-// ActionSet stores a set of unique actions.  Comparison is based on function pointer identity.
-type ActionSet map[*Action]struct{}
-
-// Add adds a new Action to the action set.  Returns error if the Action is already in the set.
-func (as ActionSet) Add(a Action) error {
-	if _, ok := as[&a]; ok {
-		return ErrDuplicateAction
+// SetPingPeriod allows the application to specify the period between sending ping messages to clients
+func SetPingPeriod(n time.Duration) error {
+	if n >= pongTimeout {
+		return ErrIllegalPingTimeout
 	}
-	as[&a] = struct{}{}
+	pingPeriod = n
 	return nil
 }
 
-// Remove ensures that Action "a" is no longer present in the ActionSet
-func (as ActionSet) Remove(a Action) {
-	// if key is not there, doesn't matter
-	delete(as, &a)
+// SetPongTimeout allows the application to specify the period allowed to receive a pong message from clients
+func SetPongTimeout(n time.Duration) error {
+	if n <= pingPeriod {
+		return ErrIllegalPingTimeout
+	}
+	pongTimeout = n
+	return nil
 }
 
+// ParseJSONMessage parses a Message from a byte stream if possible.
 func ParseJSONMessage(m []byte) (*Message, error) {
 	var messageName interface{}
 	var ok bool
@@ -155,10 +109,11 @@ type Client struct {
 	// to do so.
 	MR MessageResponder
 
-	messageHandlers map[string]ActionSet
-	eventHandlers   map[string]ActionSet
-	conn            *websocket.Conn
-	send            chan []byte
+	messageSubscriptions map[string]ActionSet
+	eventSubscriptions   map[string]ActionSet
+	conn                 *websocket.Conn
+	sendText             chan []byte
+	sendBinary           chan []byte
 }
 
 // NewClient creats a client, sets up incoming and outgoing message pipes, and
@@ -169,15 +124,19 @@ func NewClient(r *http.Request, w http.ResponseWriter, h *Hub) (*Client, error) 
 	}
 
 	c := &Client{}
-	c.send = make(chan []byte, 256)
 	// TODO accept non-http connections
 	err := c.connect(r, w)
 	if err != nil {
 		return nil, err
 	}
 	h.Add(c)
-	c.messageHandlers = make(map[string]ActionSet)
-	c.eventHandlers = make(map[string]ActionSet)
+
+	// send messages on channel, to ensure all writes go out on the same goroutine
+	c.sendText = make(chan []byte, 256)
+	c.sendBinary = make(chan []byte, 256)
+
+	c.messageSubscriptions = make(map[string]ActionSet)
+	c.eventSubscriptions = make(map[string]ActionSet)
 
 	return c, err
 }
@@ -198,23 +157,24 @@ func (c *Client) Join(families ...*Family) (err error) {
 	return err
 }
 
-// OnMessage implements MessageResponder
+// OnMessage implements MessageListener
 func (c *Client) OnMessage(kind string, do Action) {
-	if _, ok := c.messageHandlers[kind]; !ok {
-		c.messageHandlers[kind] = make(ActionSet)
+	if _, ok := c.messageSubscriptions[kind]; !ok {
+		c.messageSubscriptions[kind] = make(ActionSet)
 	}
-	c.messageHandlers[kind].Add(do)
+	c.messageSubscriptions[kind].Add(do)
 }
 
-// OffMessage implements MessageResponder
+// OffMessage implements MessageListener
 func (c *Client) OffMessage(kind string, do Action) {
-	if actions, ok := c.messageHandlers[kind]; ok {
+	if actions, ok := c.messageSubscriptions[kind]; ok {
 		actions.Remove(do)
 	}
 }
 
+// StopListening implements MessageListener
 func (c *Client) StopListening(kind string) {
-	delete(c.messageHandlers, kind)
+	delete(c.messageSubscriptions, kind)
 }
 
 // MessageRespond implments MessageResponder
@@ -224,7 +184,7 @@ func (c *Client) MessageRespond(mdg MessageDataGetter) {
 	}
 
 	messageName := mdg.Name()
-	if actions, ok := c.messageHandlers[messageName]; ok {
+	if actions, ok := c.messageSubscriptions[messageName]; ok {
 		for action := range actions {
 			do := *action
 			do(c.Client(), mdg)
@@ -276,7 +236,7 @@ func (c *Client) OffEvent(kind string) {
 }
 
 // PushMessage implements MessagePusher
-func (c *Client) PushMessage(m []byte) {
+func (c *Client) PushMessage(m []byte, messageType int) {
 
 }
 
@@ -304,17 +264,18 @@ func (c *Client) connect(r *http.Request, w http.ResponseWriter) error {
 }
 
 func (c *Client) startReading() {
-	defer func() {
-		c.conn.Close()
-	}()
+	defer c.cleanup()
 
 	c.conn.SetReadLimit(ReadLimit)
-	// TODO tj - set read and write deadline, and close connection if disconnect
-	// is detected
+	c.conn.SetReadDeadline(time.Now().Add(pongTimeout))
+	c.conn.SetPongHandler(c.handlePong)
+	c.conn.SetCloseHandler(c.handleClose)
 
 	for {
 		mtype, m, err := c.conn.ReadMessage()
 		if err != nil {
+			Errors <- err
+			c.cleanup()
 			break
 		}
 		c.receiveMessage(mtype, m)
@@ -326,20 +287,74 @@ func (c *Client) receiveMessage(mtype int, m []byte) {
 	case websocket.BinaryMessage:
 		message, err := c.ParseBinary(m)
 		if err != nil {
-			// do what?
+			Errors <- err
 		}
 		c.MessageRespond(message)
 	case websocket.TextMessage:
 		message, err := c.ParseText(m)
 		if err != nil {
-			// send err on channel?
+			Errors <- err
 		}
 		c.MessageRespond(message)
 	default:
-		// do some error thing?
+		Errors <- ErrUnparseableMessage
 	}
 }
 
 func (c *Client) startWriting() {
+	ticker := time.NewTicker(pingPeriod)
+	defer func() {
+		ticker.Stop()
+		c.cleanup()
+	}()
 
+	for {
+		select {
+		case message, ok := <-c.sendText:
+			if !ok {
+				// TODO tj - this probably won't happen right now, but if it does, clean up
+				return
+			}
+			c.doWrite(websocket.TextMessage, message)
+		case message, ok := <-c.sendBinary:
+			if !ok {
+				// same as above
+				return
+			}
+			c.doWrite(websocket.BinaryMessage, message)
+		case <-ticker.C:
+			if err := c.conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(Timeout)); err != nil {
+				// cleanup
+				return
+			}
+		}
+	}
+}
+
+func (c *Client) doWrite(messageType int, m []byte) {
+	c.conn.SetWriteDeadline(time.Now().Add(Timeout))
+	if err := c.conn.WriteMessage(messageType, m); err != nil {
+		Errors <- err
+	}
+}
+
+func (c *Client) cleanup() {
+	if _, ok := <-c.sendBinary; ok {
+		close(c.sendBinary)
+	}
+	if _, ok := <-c.sendText; ok {
+		close(c.sendText)
+	}
+	c.conn.WriteControl(websocket.CloseNormalClosure, []byte{}, time.Now().Add(Timeout))
+	c.conn.Close()
+}
+
+func (c *Client) handlePong(pong string) error {
+	c.conn.SetReadDeadline(time.Now().Add(pongTimeout))
+	return nil
+}
+
+func (c *Client) handleClose(code int, text string) error {
+	c.cleanup()
+	return nil
 }

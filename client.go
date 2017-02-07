@@ -104,15 +104,22 @@ func (m *Message) Name() string {
 // Action is a function that is executed in response to an event or message.
 type Action func(*Client, DataGetter)
 
-// ActionSet stores a set of unique actions.  Comparison is based on pointer identity.
+// ActionSet stores a set of unique actions.  Comparison is based on function pointer identity.
 type ActionSet map[*Action]struct{}
 
+// Add adds a new Action to the action set.  Returns error if the Action is already in the set.
 func (as ActionSet) Add(a Action) error {
 	if _, ok := as[&a]; ok {
 		return ErrDuplicateAction
 	}
 	as[&a] = struct{}{}
 	return nil
+}
+
+// Remove ensures that Action "a" is no longer present in the ActionSet
+func (as ActionSet) Remove(a Action) {
+	// if key is not there, doesn't matter
+	delete(as, &a)
 }
 
 func ParseJSONMessage(m []byte) (*Message, error) {
@@ -193,12 +200,21 @@ func (c *Client) Join(families ...*Family) (err error) {
 
 // OnMessage implements MessageResponder
 func (c *Client) OnMessage(kind string, do Action) {
-
+	if _, ok := c.messageHandlers[kind]; !ok {
+		c.messageHandlers[kind] = make(ActionSet)
+	}
+	c.messageHandlers[kind].Add(do)
 }
 
 // OffMessage implements MessageResponder
-func (c *Client) OffMessage(kind string) {
+func (c *Client) OffMessage(kind string, do Action) {
+	if actions, ok := c.messageHandlers[kind]; ok {
+		actions.Remove(do)
+	}
+}
 
+func (c *Client) StopListening(kind string) {
+	delete(c.messageHandlers, kind)
 }
 
 // MessageRespond implments MessageResponder

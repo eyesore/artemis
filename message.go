@@ -8,16 +8,16 @@ type MessageParser interface {
 
 // MessageListener manages the susbscriptions of one or more MessageResponders
 type MessageListener interface {
-	OnMessage(string, Action)
-	OffMessage(string)
+	OnMessage(string, MessageResponse)
+	OffMessage(string, MessageResponse)
 }
 
-// MessageResponder can respond to a received message by doing an Action
+// MessageResponder can respond to a received message by doing an MessageResponse
 type MessageResponder interface {
 	MessageListener
 	// Client returns the client that received the message being responded to.
 	// All message responders must have some way of keeping track of which client received the message,
-	// in order to pass it to Action
+	// in order to pass it to MessageResponse
 	Client() *Client
 	MessageRespond(MessageDataGetter)
 }
@@ -59,14 +59,15 @@ func (m *Message) Name() string {
 	return m.name
 }
 
-// Action is a function that is executed in response to an event or message.
-type Action func(*Client, DataGetter)
+// MessageResponse is a function that is executed in response to a message.
+// TODO - remove client arg - move to MessageDataGetter
+type MessageResponse func(*Client, MessageDataGetter)
 
-// ActionSet stores a set of unique actions.  Comparison is based on function pointer identity.
-type ActionSet map[*Action]struct{}
+// MessageResponseSet stores a set of unique actions.  Comparison is based on function pointer identity.
+type MessageResponseSet map[*MessageResponse]struct{}
 
-// Add adds a new Action to the action set.  Returns error if the Action is already in the set.
-func (as ActionSet) Add(a Action) error {
+// Add adds a new MessageResponse to the action set.  Returns error if the MessageResponse is already in the set.
+func (as MessageResponseSet) Add(a MessageResponse) error {
 	if _, ok := as[&a]; ok {
 		return ErrDuplicateAction
 	}
@@ -74,8 +75,8 @@ func (as ActionSet) Add(a Action) error {
 	return nil
 }
 
-// Remove ensures that Action "a" is no longer present in the ActionSet
-func (as ActionSet) Remove(a Action) {
+// Remove ensures that MessageResponse "a" is no longer present in the MessageResponseSet
+func (as MessageResponseSet) Remove(a MessageResponse) {
 	// if key is not there, doesn't matter
 	delete(as, &a)
 }

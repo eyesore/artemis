@@ -8,8 +8,8 @@ import "net/http"
 type Family struct {
 	H                    *Hub
 	Clients              map[string]*Client
-	messageSubscriptions map[string]ActionSet
-	eventSubscriptions   map[string]ActionSet
+	messageSubscriptions map[string]MessageResponseSet
+	eventSubscriptions   map[string]EventResponseSet
 }
 
 // NewFamily creates a new instance of Family and adds it to a hub.
@@ -20,8 +20,8 @@ func NewFamily(r *http.Request, w http.ResponseWriter, h *Hub) *Family {
 
 	f := &Family{}
 	f.Clients = make(map[string]*Client)
-	f.messageSubscriptions = make(map[string]ActionSet)
-	f.eventSubscriptions = make(map[string]ActionSet)
+	f.messageSubscriptions = make(map[string]MessageResponseSet)
+	f.eventSubscriptions = make(map[string]EventResponseSet)
 	h.Add(f)
 
 	return f
@@ -33,7 +33,7 @@ func (f *Family) JoinHub(h *Hub) {
 }
 
 // OnMessage implements MessageListener
-func (f *Family) OnMessage(kind string, do Action) {
+func (f *Family) OnMessage(kind string, do MessageResponse) {
 	f.messageSubscriptions[kind].Add(do)
 	for _, c := range f.Clients {
 		c.OnMessage(kind, do)
@@ -41,7 +41,7 @@ func (f *Family) OnMessage(kind string, do Action) {
 }
 
 // OffMessage implements MessageListener
-func (f *Family) OffMessage(kind string, do Action) {
+func (f *Family) OffMessage(kind string, do MessageResponse) {
 	if actions, ok := f.messageSubscriptions[kind]; ok {
 		actions.Remove(do)
 	}
@@ -51,7 +51,7 @@ func (f *Family) OffMessage(kind string, do Action) {
 }
 
 // OnEvent implements EventResponder
-func (f *Family) OnEvent(kind string, do Action) {
+func (f *Family) OnEvent(kind string, do EventResponse) {
 	f.eventSubscriptions[kind].Add(do)
 	for _, c := range f.Clients {
 		c.OnEvent(kind, do)
@@ -59,10 +59,10 @@ func (f *Family) OnEvent(kind string, do Action) {
 }
 
 // OffEvent implements EventResponder
-func (f *Family) OffEvent(kind string) {
+func (f *Family) OffEvent(kind string, do EventResponse) {
 	delete(f.eventSubscriptions, kind)
 	for _, c := range f.Clients {
-		c.OffEvent(kind)
+		c.OffEvent(kind, do)
 	}
 }
 

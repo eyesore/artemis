@@ -1,5 +1,7 @@
 package artemis
 
+import "fmt"
+
 // MessageParser parses byte streams into MessageDataGetters
 type MessageParser interface {
 	ParseText([]byte) (MessageDataGetter, error)
@@ -64,19 +66,26 @@ func (m *Message) Name() string {
 type MessageResponse func(*Client, MessageDataGetter)
 
 // MessageResponseSet stores a set of unique actions.  Comparison is based on function pointer identity.
-type MessageResponseSet map[*MessageResponse]struct{}
+type MessageResponseSet map[string]MessageResponse
+
+func getMessageResponseKey(r MessageResponse) string {
+	return fmt.Sprintf("%v", r)
+}
 
 // Add adds a new MessageResponse to the action set.  Returns error if the MessageResponse is already in the set.
-func (as MessageResponseSet) Add(a MessageResponse) error {
-	if _, ok := as[&a]; ok {
-		return ErrDuplicateAction
+func (rs MessageResponseSet) Add(r MessageResponse) {
+	key := getMessageResponseKey(r)
+	if _, ok := rs[key]; ok {
+		warn(ErrDuplicateAction)
+		return
 	}
-	as[&a] = struct{}{}
-	return nil
+	rs[key] = r
+	return
 }
 
 // Remove ensures that MessageResponse "a" is no longer present in the MessageResponseSet
-func (as MessageResponseSet) Remove(a MessageResponse) {
+func (rs MessageResponseSet) Remove(r MessageResponse) {
+	key := getMessageResponseKey(r)
 	// if key is not there, doesn't matter
-	delete(as, &a)
+	delete(rs, key)
 }

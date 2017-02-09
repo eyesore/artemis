@@ -1,19 +1,21 @@
 package artemis
 
-import "net/http"
+import "fmt"
 
 // Family is a category for clients.  It provides a convenient way to subscribe a group
 // of clients that should function similarly to the same events and messages.
 // Importantly, the Family only passes events directly to member Clients to handle themselves.
 type Family struct {
-	H                    *Hub
+	H *Hub
+
+	// TODO - keys can probably be client refs... no need for ID?
 	Clients              map[string]*Client
 	messageSubscriptions map[string]MessageResponseSet
 	eventSubscriptions   map[string]EventResponseSet
 }
 
 // NewFamily creates a new instance of Family and adds it to a hub.
-func NewFamily(r *http.Request, w http.ResponseWriter, h *Hub) *Family {
+func NewFamily(h *Hub) *Family {
 	if h == nil {
 		h = DefaultHub()
 	}
@@ -52,6 +54,9 @@ func (f *Family) OffMessage(kind string, do MessageResponse) {
 
 // OnEvent implements EventResponder
 func (f *Family) OnEvent(kind string, do EventResponse) {
+	if _, ok := f.eventSubscriptions[kind]; !ok {
+		f.eventSubscriptions[kind] = make(EventResponseSet)
+	}
 	f.eventSubscriptions[kind].Add(do)
 	for _, c := range f.Clients {
 		c.OnEvent(kind, do)
@@ -75,17 +80,44 @@ func (f *Family) PushMessage(m []byte, messageType int) {
 
 func (f *Family) add(c *Client) {
 	// don't do anything if the client already exists here
-	// TODO separate channel for errors that aren't that important (sic)
 	if _, ok := f.Clients[c.ID]; ok {
-		Errors <- ErrDuplicateClient
+		warn(ErrDuplicateClient)
 		return
 	}
 
 	for kind, actions := range f.messageSubscriptions {
-		for action := range actions {
-			do := *action
+		for _, do := range actions {
 			c.OnMessage(kind, do)
 		}
 	}
+	for kind, actions := range f.eventSubscriptions {
+		for _, do := range actions {
+			c.OnEvent(kind, do)
+		}
+	}
 	f.Clients[c.ID] = c
+}
+
+func (f *Family) remove(c *Client) {
+	if _, ok := f.Clients[c.ID]; !ok {
+		warn(fmt.Errorf("Trying to remove non-member client from family."))
+		return
+	}
+
+	for kind, actions := range f.eventSubscriptions {
+		for _, do := range actions {
+			c.OffEvent(kind, do)
+		}
+	}
+	for kind, actions := range f.messageSubscriptions {
+		for _, do := range actions {
+			c.OffMessage(kind, do)
+		}
+	}
+	delete(f.Clients, c.ID)
+}
+
+func (f *Family) hasMember(c *Client) bool {
+	_, ok := f.Clients[c.ID]
+	return ok
 }

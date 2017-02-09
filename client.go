@@ -35,7 +35,7 @@ type Client struct {
 
 // NewClient creats a client, sets up incoming and outgoing message pipes, and
 // registers with a Hub
-func NewClient(r *http.Request, w http.ResponseWriter, h *Hub) (*Client, error) {
+func NewClient(id string, r *http.Request, w http.ResponseWriter, h *Hub) (*Client, error) {
 	if h == nil {
 		h = DefaultHub()
 	}
@@ -46,6 +46,7 @@ func NewClient(r *http.Request, w http.ResponseWriter, h *Hub) (*Client, error) 
 	if err != nil {
 		return nil, err
 	}
+	c.ID = id
 	h.Add(c)
 
 	// send messages on channel, to ensure all writes go out on the same goroutine
@@ -74,6 +75,18 @@ func (c *Client) Join(families ...*Family) (err error) {
 		f.add(c)
 	}
 	return err
+}
+
+// Leave allows a Client to leave a Family.  This removes all family-specific listeners.
+// Trying to leave a family to which Client does not belong is safe and has no effect.
+// It sends an warning on Errors
+func (c *Client) Leave(f *Family) {
+	f.remove(c)
+}
+
+// BelongsTo reports whether Client is a member of Family
+func (c *Client) BelongsTo(f *Family) bool {
+	return f.hasMember(c)
 }
 
 // OnMessage implements MessageListener
@@ -105,8 +118,7 @@ func (c *Client) MessageRespond(mdg MessageDataGetter) {
 
 	messageName := mdg.Name()
 	if actions, ok := c.messageSubscriptions[messageName]; ok {
-		for action := range actions {
-			do := *action
+		for _, do := range actions {
 			do(c.Client(), mdg)
 		}
 	}
@@ -145,12 +157,11 @@ func (c *Client) OnEvent(kind string, do EventResponse) {
 	if !c.readyForEvents {
 		// lazy launch goroutine for event listening
 		go c.startListening()
-		// TODO mutex needed?
-		c.readyForEvents = true
 	}
 	if _, ok := c.eventSubscriptions[kind]; !ok {
 		c.eventSubscriptions[kind] = make(EventResponseSet)
 	}
+
 	c.eventSubscriptions[kind].Add(do)
 	c.H.Subscribe(kind, c.events)
 }
@@ -161,9 +172,6 @@ func (c *Client) OffEvent(kind string, do EventResponse) {
 		actions.Remove(do)
 	}
 	c.H.Unsubscribe(kind, c.events)
-	if c.noEventSubscriptions() {
-		c.eventCleanup()
-	}
 }
 
 func (c *Client) noEventSubscriptions() bool {
@@ -184,7 +192,7 @@ func (c *Client) PushMessage(m []byte, messageType int) {
 		c.sendText <- m
 	default:
 		// TODO tj probably not the right error
-		Errors <- ErrUnparseableMessage
+		throw(ErrUnparseableMessage)
 	}
 }
 
@@ -222,7 +230,7 @@ func (c *Client) startReading() {
 	for {
 		mtype, m, err := c.conn.ReadMessage()
 		if err != nil {
-			Errors <- err
+			throw(err)
 			c.messageCleanup()
 			break
 		}
@@ -235,17 +243,17 @@ func (c *Client) receiveMessage(mtype int, m []byte) {
 	case websocket.BinaryMessage:
 		message, err := c.ParseBinary(m)
 		if err != nil {
-			Errors <- err
+			throw(err)
 		}
 		c.MessageRespond(message)
 	case websocket.TextMessage:
 		message, err := c.ParseText(m)
 		if err != nil {
-			Errors <- err
+			throw(err)
 		}
 		c.MessageRespond(message)
 	default:
-		Errors <- ErrUnparseableMessage
+		throw(ErrUnparseableMessage)
 	}
 }
 
@@ -282,7 +290,7 @@ func (c *Client) startWriting() {
 func (c *Client) doWrite(messageType int, m []byte) {
 	c.conn.SetWriteDeadline(time.Now().Add(Timeout))
 	if err := c.conn.WriteMessage(messageType, m); err != nil {
-		Errors <- err
+		throw(err)
 	}
 }
 
@@ -308,23 +316,19 @@ func (c *Client) handleClose(code int, text string) error {
 }
 
 func (c *Client) startListening() {
-	defer c.eventCleanup()
-
-	for ev, ok := <-c.events; ok; {
+	defer close(c.events)
+	c.readyForEvents = true
+	for {
+		ev, ok := <-c.events
+		if !ok {
+			break
+		}
 		if actions, ok := c.eventSubscriptions[ev.Kind]; ok {
-			for action := range actions {
-				do := *action
-				do(ev.Data)
+			for _, do := range actions {
+				do(c, ev.Data)
 			}
 		}
 	}
 
-	Errors <- ErrEventChannelHasClosed
-}
-
-func (c *Client) eventCleanup() {
-	if _, ok := <-c.events; ok {
-		c.readyForEvents = false
-		close(c.events)
-	}
+	warn(ErrEventChannelHasClosed)
 }

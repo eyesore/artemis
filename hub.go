@@ -1,6 +1,9 @@
 package artemis
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 var (
 	hubs = make(map[string]*Hub)
@@ -45,24 +48,30 @@ func (ed *EventData) Data() interface{} {
 // TODO differentiate from MessageResponse or consolidate
 
 // EventResponse is a function that is executed in response to a message.
-type EventResponse func(DataGetter)
+type EventResponse func(EventResponder, DataGetter)
 
-// EventResponseSet stores a set of unique actions.  Comparison is based on function pointer identity.
-type EventResponseSet map[*EventResponse]struct{}
+// EventResponseSet stores a set of unique actions.  Comparison is based on string value of fn.
+type EventResponseSet map[string]EventResponse
+
+func getEventResponseKey(r EventResponse) string {
+	return fmt.Sprintf("%v", r)
+}
 
 // Add adds a new EventResponse to the action set.  Returns error if the EventResponse is already in the set.
-func (ers EventResponseSet) Add(r EventResponse) error {
-	if _, ok := ers[&r]; ok {
-		return ErrDuplicateAction
+func (ers EventResponseSet) Add(r EventResponse) {
+	key := getEventResponseKey(r)
+	if _, ok := ers[key]; ok {
+		throw(ErrDuplicateAction)
+		return
 	}
-	ers[&r] = struct{}{}
-	return nil
+	ers[key] = r
 }
 
 // Remove ensures that EventResponse "a" is no longer present in the EventResponseSet
 func (ers EventResponseSet) Remove(r EventResponse) {
+	key := getEventResponseKey(r)
 	// if key is not there, doesn't matter
-	delete(ers, &r)
+	delete(ers, key)
 }
 
 type SubscriptionSet map[chan Event]struct{}
@@ -95,6 +104,7 @@ func NewHub(id string) (*Hub, error) {
 	h := &Hub{}
 	h.ID = id
 	h.members = make([]EventResponder, 0)
+	h.subscriptions = make(map[string]SubscriptionSet)
 	hubs[id] = h
 
 	return h, nil
@@ -132,7 +142,7 @@ func (h *Hub) Fire(eventKind string, data DataGetter) {
 			sub <- Event{eventKind, data}
 		}
 	} else {
-		Errors <- ErrNoSubscribers
+		warn(fmt.Errorf("Hub fired event of kind '%s' but no one was listening.", eventKind))
 	}
 }
 

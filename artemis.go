@@ -7,6 +7,7 @@ package artemis
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"time"
 )
 
@@ -30,7 +31,8 @@ var (
 
 	// Errors sends errors encountered during send and receive and is meant to be consumed by a logger
 	// TODO provide default logger to stdout
-	Errors = make(chan error)
+	Errors   = make(chan error, 256)
+	Warnings = make(chan error, 256)
 
 	// ErrHubMismatch occurs when trying to add a client to family with a different hub.
 	ErrHubMismatch = errors.New("Unable to add a client to a family in a different hub.")
@@ -56,6 +58,40 @@ var (
 
 	errNotYetImplemented = errors.New("You are trying to use a feature that has not been implemented yet.")
 )
+
+// initialize logging to STDOUT
+// TODO, setuplogger and allow override
+func init() {
+	go func() {
+		// log errors and warnings
+		for {
+			select {
+			case w := <-Warnings:
+				log.Println(w)
+			case e := <-Errors:
+				log.Println(e)
+			}
+		}
+	}()
+}
+
+func warn(e error) {
+	go sendWarning(e)
+}
+
+func throw(e error) {
+	go sendError(e)
+}
+
+func sendWarning(e error) {
+	// TODO write artemis prefix to all outgoing messages
+	Warnings <- e
+}
+
+func sendError(e error) {
+	// TODO write artemis prefix to all outgoing messages
+	Errors <- e
+}
 
 // SetPingPeriod allows the application to specify the period between sending ping messages to clients
 func SetPingPeriod(n time.Duration) error {

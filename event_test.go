@@ -1,109 +1,21 @@
 package artemis
 
 import (
-	"bufio"
-	"bytes"
 	"errors"
-	"net"
-	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/eyesore/wstest"
 )
 
 var (
 	// default test timeout
 	deadline        = 3 * time.Second
-	defaultRequest  = httptest.NewRequest("GET", "/doesnotmatter", nil)
-	defaultResponse = NewWsRecorder()
+	defaultRequest  = wstest.TestRequest("/doesnotmatter")
+	defaultResponse = wstest.NewWsRecorder()
 
 	errTimeoutWaitingForValue = errors.New("Test timed out while waiting for value")
 )
-
-func init() {
-	defaultRequest.Header.Add("Connection", "upgrade")
-	defaultRequest.Header.Add("Upgrade", "websocket")
-	defaultRequest.Header.Add("Sec-Websocket-Version", "13")
-	defaultRequest.Header.Add("Sec-Websocket-Key", "this is a test")
-}
-
-// TODO break all this out
-type WsRecorder struct {
-	*httptest.ResponseRecorder
-	in   *bufio.Reader
-	out  *bufio.Writer
-	conn *MockConn
-}
-
-func NewWsRecorder() *WsRecorder {
-	w := WsRecorder{
-		httptest.NewRecorder(),
-		bufio.NewReader(bytes.NewBuffer(nil)),
-		nil,
-		NewMockConn(),
-	}
-	w.out = bufio.NewWriter(w.Body)
-	return &w
-}
-
-func (w *WsRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	return w.conn, bufio.NewReadWriter(w.in, w.out), nil
-}
-
-type MockAddr struct {
-	NetworkString string
-	AddrString    string
-}
-
-func (a *MockAddr) Network() string {
-	return a.NetworkString
-}
-
-func (a *MockAddr) String() string {
-	return a.AddrString
-}
-
-type MockConn struct {
-	*bytes.Buffer
-	addr *MockAddr
-}
-
-func NewMockConn() *MockConn {
-	conn := MockConn{
-		bytes.NewBuffer([]byte{}),
-		&MockAddr{
-			"tcp",
-			"127.0.0.1",
-		},
-	}
-
-	return &conn
-}
-
-func (mc *MockConn) Close() error {
-	return nil
-}
-
-func (mc *MockConn) LocalAddr() net.Addr {
-	return mc.addr
-}
-
-func (mc *MockConn) RemoteAddr() net.Addr {
-	return mc.addr
-}
-
-func (mc *MockConn) SetDeadline(t time.Time) error {
-	mc.SetReadDeadline(t)
-	mc.SetWriteDeadline(t)
-	return nil
-}
-
-func (mc *MockConn) SetReadDeadline(t time.Time) error {
-	return nil
-}
-
-func (mc *MockConn) SetWriteDeadline(t time.Time) error {
-	return nil
-}
 
 func createTestClient(t *testing.T, id string, h *Hub) *Client {
 	c, err := NewClient(id, defaultRequest, defaultResponse, h)

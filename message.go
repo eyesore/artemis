@@ -72,7 +72,7 @@ func getMessageResponseKey(r MessageResponse) string {
 	return fmt.Sprintf("%v", r)
 }
 
-// Add adds a new MessageResponse to the action set.  Returns error if the MessageResponse is already in the set.
+// Add puts a new MessageResponse into the set.  Warns asynchronously if r is already in the set.
 func (rs MessageResponseSet) Add(r MessageResponse) {
 	key := getMessageResponseKey(r)
 	if _, ok := rs[key]; ok {
@@ -83,7 +83,7 @@ func (rs MessageResponseSet) Add(r MessageResponse) {
 	return
 }
 
-// Remove ensures that MessageResponse "a" is no longer present in the MessageResponseSet
+// Remove ensures that MessageResponse "r" is no longer present in the MessageResponseSet
 func (rs MessageResponseSet) Remove(r MessageResponse) {
 	key := getMessageResponseKey(r)
 	// if key is not there, doesn't matter

@@ -10,8 +10,9 @@ var (
 
 	// DefaultHub is a singleton that allows the library to be used without really worrying about
 	// the Hub API.  If only a single hub is needed, then this is a fine solution.
+	// the uuid suffix is static and completely arbitrary
 	defaultHub   *Hub
-	defaultHubID = "artemis:DefaultHub"
+	defaultHubID = "artemis:DefaultHub:74157a9f-9fd2-4030-b704-f3ce20eb6df7"
 
 	// ErrDuplicateHubID indicates that hub creation failed because the name is already in use.
 	ErrDuplicateHubID = errors.New("A hub with that ID already exists.")
@@ -57,11 +58,11 @@ func getEventResponseKey(r EventResponse) string {
 	return fmt.Sprintf("%v", r)
 }
 
-// Add adds a new EventResponse to the action set.  Returns error if the EventResponse is already in the set.
+// Add puts a new EventResponse into the set.  Warns asynchronously if r is already in the set.
 func (ers EventResponseSet) Add(r EventResponse) {
 	key := getEventResponseKey(r)
 	if _, ok := ers[key]; ok {
-		throw(ErrDuplicateAction)
+		warn(ErrDuplicateAction)
 		return
 	}
 	ers[key] = r

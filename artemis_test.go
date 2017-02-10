@@ -3,7 +3,6 @@ package artemis
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -462,7 +461,6 @@ func TestOnMessage(t *testing.T) {
 	ch := make(chan interface{})
 
 	c1.OnMessage(messageName, func(c *Client, mdg MessageDataGetter) {
-		log.Print("received message on c1")
 		ch <- 1
 	})
 	err := incoming.WriteMessage(websocket.TextMessage, testJSONObj)
@@ -473,4 +471,109 @@ func TestOnMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	cleanup()
+}
+
+func TestOffMessage(t *testing.T) {
+	incoming, c1 := createTestClients(t, "c1", nil)
+	messageName := "testMessage"
+	ch := make(chan interface{})
+	cb1 := func(c *Client, mdg MessageDataGetter) {
+		ch <- 1
+	}
+
+	c1.OnMessage(messageName, cb1)
+	err := incoming.WriteMessage(websocket.TextMessage, testJSONObj)
+	if err != nil {
+		t.Fatal("Problem writing to incoming connection: ", err)
+	}
+	if _, err = waitForValueOrTimeout(ch, deadline); err != nil {
+		t.Fatal(err)
+	}
+
+	c1.OffMessage(messageName, cb1)
+	err = incoming.WriteMessage(websocket.TextMessage, testJSONObj)
+	if err != nil {
+		t.Fatal("Problem writing to incoming connection: ", err)
+	}
+	if _, err = waitForValueOrTimeout(ch, deadline); err != errTimeoutWaitingForValue {
+		t.Fatal("Listener should have been removed, but we got a value anyway.")
+	}
+}
+
+func TestFamilyOnMessage(t *testing.T) {
+	incoming, c1 := createTestClients(t, "c1", nil)
+	f1 := createTestFamily(t, "f1", nil)
+	messageName := "testMessage"
+	ch := make(chan interface{})
+	c1.Join(f1)
+
+	f1.OnMessage(messageName, func(c *Client, mdg MessageDataGetter) {
+		ch <- c
+	})
+	err := incoming.WriteMessage(websocket.TextMessage, testJSONObj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := waitForValueOrTimeout(ch, deadline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data.(*Client).ID != "c1" {
+		t.Fatal("unexpected client id returned from message")
+	}
+	cleanup()
+}
+
+func TestFamilyOnMessageRetro(t *testing.T) {
+	incoming, c1 := createTestClients(t, "c1", nil)
+	f1 := createTestFamily(t, "f1", nil)
+	messageName := "testMessage"
+	ch := make(chan interface{})
+
+	f1.OnMessage(messageName, func(c *Client, mdg MessageDataGetter) {
+		ch <- c
+	})
+	c1.Join(f1)
+
+	err := incoming.WriteMessage(websocket.TextMessage, testJSONObj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := waitForValueOrTimeout(ch, deadline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data.(*Client).ID != "c1" {
+		t.Fatal("unexpected client id returned from message")
+	}
+	cleanup()
+}
+
+func TestFamilyOffMessage(t *testing.T) {
+	incoming, c1 := createTestClients(t, "c1", nil)
+	f1 := createTestFamily(t, "f1", nil)
+	messageName := "testMessage"
+	ch := make(chan interface{})
+	cb1 := func(c *Client, mdg MessageDataGetter) {
+		ch <- 1
+	}
+	c1.Join(f1)
+
+	f1.OnMessage(messageName, cb1)
+	err := incoming.WriteMessage(websocket.TextMessage, testJSONObj)
+	if err != nil {
+		t.Fatal("Problem writing to incoming connection: ", err)
+	}
+	if _, err = waitForValueOrTimeout(ch, deadline); err != nil {
+		t.Fatal(err)
+	}
+
+	f1.OffMessage(messageName, cb1)
+	err = incoming.WriteMessage(websocket.TextMessage, testJSONObj)
+	if err != nil {
+		t.Fatal("Problem writing to incoming connection: ", err)
+	}
+	if _, err = waitForValueOrTimeout(ch, deadline); err != errTimeoutWaitingForValue {
+		t.Fatal("Listener should have been removed, but we got a value anyway.")
+	}
 }

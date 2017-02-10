@@ -1,3 +1,6 @@
+# This information is outdated (since always) - leaving in case some ideas need to be reviewed/used
+# Updated README coming soon.
+
 App is responsible for handling http request (authentication, any other operation desired)
 App is responsible for creating any hubs or families that the client should belong to, and adding the client to those.
 

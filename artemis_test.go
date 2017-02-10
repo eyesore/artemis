@@ -59,7 +59,7 @@ func createTestFamily(t *testing.T, id string, h *Hub) *Family {
 func createTestHub(t *testing.T, id string) *Hub {
 	h, err := NewHub(id)
 	if err != nil {
-		t.Fatal("Unable to create test hub with id: ", id)
+		t.Fatal("Unable to create test hub with id=", id, " Err:", err)
 	}
 
 	return h
@@ -104,6 +104,7 @@ func waitForValueOrTimeout(c chan interface{}, wait time.Duration) (interface{},
 
 func cleanup() {
 	defaultHub = nil
+	hubs = make(map[string]*Hub)
 }
 
 func TestMain(m *testing.M) {

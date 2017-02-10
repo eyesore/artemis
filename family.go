@@ -36,6 +36,9 @@ func (f *Family) JoinHub(h *Hub) {
 
 // OnMessage implements MessageListener
 func (f *Family) OnMessage(kind string, do MessageResponse) {
+	if _, ok := f.messageSubscriptions[kind]; !ok {
+		f.messageSubscriptions[kind] = make(MessageResponseSet)
+	}
 	f.messageSubscriptions[kind].Add(do)
 	for _, c := range f.Clients {
 		c.OnMessage(kind, do)

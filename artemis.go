@@ -116,7 +116,7 @@ func ParseJSONMessage(m []byte) (*Message, error) {
 	var messageName interface{}
 	var ok bool
 	pm := make(map[string]interface{})
-	err := json.Unmarshal(m, pm)
+	err := json.Unmarshal(m, &pm)
 	if err != nil {
 		return nil, err
 	}

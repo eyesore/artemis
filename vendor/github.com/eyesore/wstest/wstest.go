@@ -2,7 +2,7 @@ package wstest
 
 import (
 	"bufio"
-	"bytes"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -11,24 +11,29 @@ import (
 
 type WsRecorder struct {
 	*httptest.ResponseRecorder
-	in   *bufio.Reader
-	out  *bufio.Writer
 	conn *MockConn
 }
 
-func NewWsRecorder() *WsRecorder {
+func NewRecorder() *WsRecorder {
 	w := WsRecorder{
 		httptest.NewRecorder(),
-		bufio.NewReader(bytes.NewBuffer(nil)),
 		nil,
-		NewMockConn(),
 	}
-	w.out = bufio.NewWriter(w.Body)
+	// reader := bytes.NewReader([]byte{}) // this is reading NOTHING
+	// TJ - this is very weird - check it out - does it work?
+	read, _ := io.Pipe()
+	w.conn = NewMockConn(read, w)
+
 	return &w
 }
 
 func (w *WsRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	return w.conn, bufio.NewReadWriter(w.in, w.out), nil
+	readPipe, writePipe := io.Pipe()
+	reader := bufio.NewReader(readPipe)
+	writer := bufio.NewWriter(writePipe)
+	w.conn.HijackedPipe = bufio.NewReadWriter(reader, writer)
+
+	return w.conn, w.conn.HijackedPipe, nil
 }
 
 type MockAddr struct {
@@ -45,13 +50,17 @@ func (a *MockAddr) String() string {
 }
 
 type MockConn struct {
-	*bytes.Buffer
-	addr *MockAddr
+	Reader       io.Reader
+	Writer       io.Writer
+	HijackedPipe *bufio.ReadWriter
+	addr         *MockAddr
 }
 
-func NewMockConn() *MockConn {
+func NewMockConn(r io.Reader, w io.Writer) *MockConn {
 	conn := MockConn{
-		bytes.NewBuffer([]byte{}),
+		r,
+		w,
+		nil,
 		&MockAddr{
 			"tcp",
 			"127.0.0.1",
@@ -61,31 +70,30 @@ func NewMockConn() *MockConn {
 	return &conn
 }
 
+func (mc *MockConn) InsertMessage(b []byte) (int, error) {
+	return mc.HijackedPipe.Write(b)
+}
+
 func (mc *MockConn) Close() error {
+	// if err := mc.Reader.Close(); err != nil {
+	// 	return err
+	// }
+	// if err := mc.Writer.Close(); err != nil {
+	// 	return err
+	// }
+
 	return nil
 }
 
-func (mc *MockConn) LocalAddr() net.Addr {
-	return mc.addr
-}
+func (mc *MockConn) Read(data []byte) (int, error)  { return mc.Reader.Read(data) }
+func (mc *MockConn) Write(data []byte) (int, error) { return mc.Writer.Write(data) }
 
-func (mc *MockConn) RemoteAddr() net.Addr {
-	return mc.addr
-}
+func (mc *MockConn) LocalAddr() net.Addr  { return mc.addr }
+func (mc *MockConn) RemoteAddr() net.Addr { return mc.addr }
 
-func (mc *MockConn) SetDeadline(t time.Time) error {
-	mc.SetReadDeadline(t)
-	mc.SetWriteDeadline(t)
-	return nil
-}
-
-func (mc *MockConn) SetReadDeadline(t time.Time) error {
-	return nil
-}
-
-func (mc *MockConn) SetWriteDeadline(t time.Time) error {
-	return nil
-}
+func (mc *MockConn) SetDeadline(t time.Time) error      { return nil }
+func (mc *MockConn) SetReadDeadline(t time.Time) error  { return nil }
+func (mc *MockConn) SetWriteDeadline(t time.Time) error { return nil }
 
 func TestRequest(target string) *http.Request {
 	r := httptest.NewRequest("GET", target, nil)

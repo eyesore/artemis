@@ -54,6 +54,12 @@ type EventResponse func(EventResponder, DataGetter)
 // EventResponseSet stores a set of unique actions.  Comparison is based on string value of fn.
 type EventResponseSet map[string]EventResponse
 
+// EventResponderSet is predicated on being able to distinguish between functions to prevent
+// duplicate adds and to allow removal.  This proves difficult to do.
+// The go language spec states that functions are not comparable -
+// therefore, there is no guarantee that this technique will work in the future, or at all
+// Link: http://stackoverflow.com/a/42147285/1375316
+// TODO compare interfaces instead of fns?
 func getEventResponseKey(r EventResponse) string {
 	return fmt.Sprintf("%v", r)
 }

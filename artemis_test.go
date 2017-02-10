@@ -2,28 +2,55 @@ package artemis
 
 import (
 	"errors"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
 	"testing"
 	"time"
 
-	"github.com/eyesore/wstest"
+	"github.com/gorilla/websocket"
 )
 
 var (
 	// default test timeout
-	deadline        = 3 * time.Second
-	defaultRequest  = wstest.TestRequest("/doesnotmatter")
-	defaultResponse = wstest.NewWsRecorder()
+	deadline         = 3 * time.Second
+	testServerPort   = "8081"
+	testPath         = "testws"
+	testJSONObj      = []byte(`{"name":"testMessage","data":{"item1":"thing","item2":"thing2"}}`)
+	stopChan         = make(chan bool)
+	connectedClients = make(chan interface{}, 5)
 
 	errTimeoutWaitingForValue = errors.New("Test timed out while waiting for value")
 )
 
-func createTestClient(t *testing.T, id string, h *Hub) *Client {
-	c, err := NewClient(id, defaultRequest, defaultResponse, h)
+type testconn struct {
+	client *websocket.Conn
+	server *Client
+}
+
+// TODO how confusing is this signature?  the server is a client and the client is a conn
+func createTestClients(t *testing.T, id string, h *Hub) (client *websocket.Conn, server *Client) {
+	// TODO header?
+	u := url.URL{Scheme: "ws", Host: "localhost:" + testServerPort, Path: testPath}
+	client, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 	if err != nil {
-		t.Fatal("Unable to create test client with id: ", id, "- ", err)
+		t.Fatal("Failed to get ws client connection: ", err)
 	}
 
-	return c
+	serverInterface, err := waitForValueOrTimeout(connectedClients, 5*time.Second)
+	if err != nil {
+		t.Fatal("Failed to get ws server connection: ", err)
+	}
+	server = serverInterface.(*Client)
+	server.ID = id
+	if h != nil {
+		h.Add(server)
+	}
+
+	return
 }
 
 func createTestFamily(t *testing.T, id string, h *Hub) *Family {
@@ -39,6 +66,34 @@ func createTestHub(t *testing.T, id string) *Hub {
 	return h
 }
 
+func createTestServer() error {
+	http.HandleFunc("/testws", func(w http.ResponseWriter, r *http.Request) {
+		// set up client and pass to client creation
+		c, err := NewClient("", r, w, nil)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		connectedClients <- c
+	})
+
+	l, err := net.Listen("tcp", fmt.Sprintf(":%s", testServerPort))
+	if err != nil {
+		return err
+	}
+
+	go waitForStopSignal(l)
+	go http.Serve(l, nil)
+
+	return nil
+}
+
+func waitForStopSignal(l net.Listener) {
+	<-stopChan
+	l.Close()
+	close(stopChan)
+	close(connectedClients)
+}
+
 func waitForValueOrTimeout(c chan interface{}, wait time.Duration) (interface{}, error) {
 	select {
 	case value := <-c:
@@ -52,9 +107,24 @@ func cleanup() {
 	defaultHub = nil
 }
 
+func TestMain(m *testing.M) {
+	// TODO testgroups for messaging and events separately?
+	err := createTestServer()
+	if err != nil {
+		os.Exit(1)
+	}
+	defer func() {
+		stopChan <- true
+	}()
+
+	os.Exit(m.Run())
+}
+
+// EVENTS
+
 func TestSingleDefaultHub(t *testing.T) {
-	c1 := createTestClient(t, "c1", nil)
-	c2 := createTestClient(t, "c2", nil)
+	_, c1 := createTestClients(t, "c1", nil)
+	_, c2 := createTestClients(t, "c2", nil)
 	eventName := "testEvent"
 	valueC := make(chan interface{})
 
@@ -75,7 +145,7 @@ func TestSingleDefaultHub(t *testing.T) {
 
 func TestDataContent(t *testing.T) {
 	// also test c1 firing and receiving event
-	c1 := createTestClient(t, "c1", nil)
+	_, c1 := createTestClients(t, "c1", nil)
 	eventName := "testEvent"
 	valueC := make(chan interface{})
 
@@ -107,8 +177,8 @@ func TestDataContent(t *testing.T) {
 func TestHubIsolation(t *testing.T) {
 	h1 := createTestHub(t, "h1")
 	h2 := createTestHub(t, "h2")
-	c1 := createTestClient(t, "c1", h1)
-	c2 := createTestClient(t, "c2", h2)
+	_, c1 := createTestClients(t, "c1", h1)
+	_, c2 := createTestClients(t, "c2", h2)
 	h1Chan := make(chan interface{}, 5)
 	h2Chan := make(chan interface{}, 5)
 	eventName := "sameForBothHubs"
@@ -140,8 +210,8 @@ func TestHubIsolation(t *testing.T) {
 
 func TestFamilyResponse(t *testing.T) {
 	f1 := createTestFamily(t, "f1", nil)
-	c1 := createTestClient(t, "c1", nil)
-	c2 := createTestClient(t, "c2", nil)
+	_, c1 := createTestClients(t, "c1", nil)
+	_, c2 := createTestClients(t, "c2", nil)
 	ch := make(chan interface{})
 	eventName := "testEvent"
 
@@ -166,9 +236,9 @@ func TestFamilyResponse(t *testing.T) {
 }
 
 func TestFamilyLeaveUnsubscribe(t *testing.T) {
-	c1 := createTestClient(t, "c1", nil)
+	_, c1 := createTestClients(t, "c1", nil)
 	// not necessessary to fire from a separate client, just testing this case
-	c2 := createTestClient(t, "c2", nil)
+	_, c2 := createTestClients(t, "c2", nil)
 	f1 := createTestFamily(t, "f1", nil)
 	f2 := createTestFamily(t, "f2", nil)
 	f3 := createTestFamily(t, "f3", nil)
@@ -224,7 +294,7 @@ func TestFamilyLeaveUnsubscribe(t *testing.T) {
 
 // current expected behavior is for the listener to only be added once.
 func TestDifferentFamilySameListener(t *testing.T) {
-	c1 := createTestClient(t, "c1", nil)
+	_, c1 := createTestClients(t, "c1", nil)
 	f1 := createTestFamily(t, "f1", nil)
 	f2 := createTestFamily(t, "f2", nil)
 	ch := make(chan interface{})
@@ -250,10 +320,10 @@ func TestDifferentFamilySameListener(t *testing.T) {
 }
 
 func TestNonsubscribers(t *testing.T) {
-	c1 := createTestClient(t, "c1", nil)
-	c2 := createTestClient(t, "c2", nil)
-	c3 := createTestClient(t, "c3", nil)
-	c4 := createTestClient(t, "c4", nil)
+	_, c1 := createTestClients(t, "c1", nil)
+	_, c2 := createTestClients(t, "c2", nil)
+	_, c3 := createTestClients(t, "c3", nil)
+	_, c4 := createTestClients(t, "c4", nil)
 	f1 := createTestFamily(t, "f1", nil)
 	f2 := createTestFamily(t, "f2", nil)
 	f1Event := "f1"
@@ -316,7 +386,7 @@ func TestNonsubscribers(t *testing.T) {
 }
 
 func TestOffEvent(t *testing.T) {
-	c1 := createTestClient(t, "c1", nil)
+	_, c1 := createTestClients(t, "c1", nil)
 	ch1 := make(chan interface{})
 	e1 := "e1"
 	cb1 := func(r EventResponder, dg DataGetter) {
@@ -333,4 +403,74 @@ func TestOffEvent(t *testing.T) {
 	if _, err := waitForValueOrTimeout(ch1, deadline); err != errTimeoutWaitingForValue {
 		t.Error(err)
 	}
+}
+
+// family specific
+
+func TestFamilyClientHubMismatch(t *testing.T) {
+	h1 := createTestHub(t, "h1")
+	f1 := createTestFamily(t, "f1", h1)
+	f2 := createTestFamily(t, "f2", nil)
+	f3 := createTestFamily(t, "f3", nil)
+	_, c1 := createTestClients(t, "c1", nil)
+
+	if err := c1.Join(f1); err != ErrHubMismatch {
+		t.Error("Expected hub mismatch error, but none returned.")
+	}
+	if err := c1.Join(f2, f3); err != nil {
+		t.Error("Client should be able to join these families without issue.")
+	}
+
+	c1.Leave(f2)
+	c1.Leave(f3)
+
+	err := c1.Join(f1, f2, f3)
+	if err != ErrHubMismatch {
+		t.Error("Expected hub mismatch when joining all 3 families, but none returned.")
+	}
+	if c1.BelongsTo(f1) || !c1.BelongsTo(f2) || !c1.BelongsTo(f3) {
+		t.Error("Resulting family membership for c1 is not correct.")
+	}
+	cleanup()
+}
+
+func TestFamilyJoinLeave(t *testing.T) {
+	_, c1 := createTestClients(t, "c1", nil)
+	f1 := createTestFamily(t, "f1", nil)
+	f2 := createTestFamily(t, "f2", nil)
+
+	c1.Join(f1, f2)
+	if !c1.BelongsTo(f1) || !c1.BelongsTo(f2) {
+		t.Fatal("c1 did not correctly join families.")
+	}
+
+	c1.Leave(f2)
+	if !c1.BelongsTo(f1) {
+		t.Error("c1 should still belong to f1")
+	}
+	if c1.BelongsTo(f2) {
+		t.Error("c1 should no longer belong to f2")
+	}
+	cleanup()
+}
+
+// MESSAGES
+
+func TestOnMessage(t *testing.T) {
+	incoming, c1 := createTestClients(t, "c1", nil)
+	messageName := "testMessage"
+	ch := make(chan interface{})
+
+	c1.OnMessage(messageName, func(c *Client, mdg MessageDataGetter) {
+		log.Print("received message on c1")
+		ch <- 1
+	})
+	err := incoming.WriteMessage(websocket.TextMessage, testJSONObj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := waitForValueOrTimeout(ch, deadline); err != nil {
+		t.Fatal(err)
+	}
+	cleanup()
 }

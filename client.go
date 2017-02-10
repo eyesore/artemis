@@ -1,6 +1,7 @@
 package artemis
 
 import (
+	"log"
 	"net/http"
 	"time"
 
@@ -230,6 +231,7 @@ func (c *Client) startReading() {
 	for {
 		mtype, m, err := c.conn.ReadMessage()
 		if err != nil {
+			log.Print("getting an error in the read loop")
 			throw(err)
 			c.messageCleanup()
 			break

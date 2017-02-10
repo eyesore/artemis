@@ -1,3 +1,10 @@
+# Artemis is an RTMES (Real Time Event & Message Server) with a Go API
+## Built on top of gorilla/websocket, to be expanded to support other real time protocols
+
+Use Artemis to manage server-side WS (for now) connections.
+Create clients, and group them into families and hubs.  Add listeners for events and messages on a per-client
+or per-family basis.
+
 # This information is outdated (since always) - leaving in case some ideas need to be reviewed/used
 # Updated README coming soon.
 

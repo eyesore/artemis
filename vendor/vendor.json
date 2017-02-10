@@ -3,11 +3,6 @@
 	"ignore": "test",
 	"package": [
 		{
-			"checksumSHA1": "5EpfdLxr7m8q3c1VU1nKHpb4kX0=",
-			"path": "github.com/eyesore/wstest",
-			"revision": ""
-		},
-		{
 			"checksumSHA1": "++qMWbJ7ptiXehuLTFtEDGGnwpM=",
 			"path": "github.com/gorilla/websocket",
 			"revision": "c36f2fe5c330f0ac404b616b96c438b8616b1aaf",

@@ -12,6 +12,7 @@ import (
 )
 
 // TODO support multiple socket protocols
+// TODO - permission to fire events?  Defined by hub?  Gated events?
 
 var (
 	// DefaultTextParser can be overridden to implement text parsing for Client without

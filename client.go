@@ -13,8 +13,7 @@ import (
 // It maintainss a socket connection until the Client is destroyed.
 // Client is an EventResponder, MessageParseResponder, and MessagePusher
 type Client struct {
-	ID string
-	H  *Hub
+	DefaultEventResponder
 
 	// MP defaults to nil, and if not set Clint will attempt to parse all incoming messages.
 	// If a parser is set, Client will hand off all MessageParsing responsibilites to MP.
@@ -26,12 +25,9 @@ type Client struct {
 	MR MessageResponder
 
 	messageSubscriptions map[string]MessageResponseSet
-	eventSubscriptions   map[string]EventResponseSet
 	conn                 *websocket.Conn
 	sendText             chan []byte
 	sendBinary           chan []byte
-	events               chan Event
-	readyForEvents       bool
 }
 
 // NewClient creats a client, sets up incoming and outgoing message pipes, and
@@ -146,42 +142,6 @@ func (c *Client) ParseBinary(m []byte) (MessageDataGetter, error) {
 	}
 	// TODO
 	return nil, errNotYetImplemented
-}
-
-// JoinHub implements Event Responder
-func (c *Client) JoinHub(h *Hub) {
-	c.H = h
-}
-
-// OnEvent implements EventResponder
-func (c *Client) OnEvent(kind string, do EventResponse) {
-	if !c.readyForEvents {
-		// lazy launch goroutine for event listening
-		go c.startListening()
-	}
-	if _, ok := c.eventSubscriptions[kind]; !ok {
-		c.eventSubscriptions[kind] = make(EventResponseSet)
-	}
-
-	c.eventSubscriptions[kind].Add(do)
-	c.H.Subscribe(kind, c.events)
-}
-
-// OffEvent implements EventResponder
-func (c *Client) OffEvent(kind string, do EventResponse) {
-	if actions, ok := c.eventSubscriptions[kind]; ok {
-		actions.Remove(do)
-	}
-	c.H.Unsubscribe(kind, c.events)
-}
-
-func (c *Client) noEventSubscriptions() bool {
-	for _, responses := range c.eventSubscriptions {
-		if len(responses) > 0 {
-			return false
-		}
-	}
-	return true
 }
 
 // PushMessage implements MessagePusher
@@ -315,22 +275,4 @@ func (c *Client) handlePong(pong string) error {
 func (c *Client) handleClose(code int, text string) error {
 	c.messageCleanup()
 	return nil
-}
-
-func (c *Client) startListening() {
-	defer close(c.events)
-	c.readyForEvents = true
-	for {
-		ev, ok := <-c.events
-		if !ok {
-			break
-		}
-		if actions, ok := c.eventSubscriptions[ev.Kind]; ok {
-			for _, do := range actions {
-				do(c, ev.Data)
-			}
-		}
-	}
-
-	warn(ErrEventChannelHasClosed)
 }

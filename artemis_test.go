@@ -25,11 +25,6 @@ var (
 	errTimeoutWaitingForValue = errors.New("Test timed out while waiting for value")
 )
 
-type testconn struct {
-	client *websocket.Conn
-	server *Client
-}
-
 // TODO how confusing is this signature?  the server is a client and the client is a conn
 func createTestClients(t *testing.T, id string, h *Hub) (client *websocket.Conn, server *Client) {
 	// TODO header?
@@ -229,7 +224,7 @@ func TestFamilyResponse(t *testing.T) {
 			t.Error("Timed out waiting for ", eventName)
 			continue
 		}
-		t.Logf("Heard event (%v) from %s", i+1, data.(*Client).ID)
+		t.Logf("Heard event (%v) from %s", i+1, data.(*DefaultEventResponder).ID)
 	}
 
 	cleanup()
@@ -345,7 +340,7 @@ func TestNonsubscribers(t *testing.T) {
 				t.Error(err)
 				continue
 			}
-			id := value.(*Client).ID
+			id := value.(*DefaultEventResponder).ID
 			for _, client := range clients {
 				if id == client {
 					t.Errorf("Non-subscribed entity: %s received event %s", id, eventName)

@@ -93,6 +93,68 @@ func (ss SubscriptionSet) Remove(c chan Event) {
 	delete(ss, c)
 }
 
+type DefaultEventResponder struct {
+	ID                 string
+	H                  *Hub
+	events             chan Event
+	readyForEvents     bool
+	eventSubscriptions map[string]EventResponseSet
+}
+
+// JoinHub implements Event Responder
+func (d *DefaultEventResponder) JoinHub(h *Hub) {
+	d.H = h
+}
+
+// OnEvent implements EventResponder
+func (d *DefaultEventResponder) OnEvent(kind string, do EventResponse) {
+	if !d.readyForEvents {
+		// lazy launch goroutine for event listening
+		go d.startListening()
+	}
+	if _, ok := d.eventSubscriptions[kind]; !ok {
+		d.eventSubscriptions[kind] = make(EventResponseSet)
+	}
+
+	d.eventSubscriptions[kind].Add(do)
+	d.H.Subscribe(kind, d.events)
+}
+
+// OffEvent implements EventResponder
+func (d *DefaultEventResponder) OffEvent(kind string, do EventResponse) {
+	if actions, ok := d.eventSubscriptions[kind]; ok {
+		actions.Remove(do)
+	}
+	d.H.Unsubscribe(kind, d.events)
+}
+
+func (d *DefaultEventResponder) noEventSubscriptions() bool {
+	for _, responses := range d.eventSubscriptions {
+		if len(responses) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (d *DefaultEventResponder) startListening() {
+	defer close(d.events)
+	d.readyForEvents = true
+	for {
+		ev, ok := <-d.events
+		if !ok {
+			break
+		}
+		if actions, ok := d.eventSubscriptions[ev.Kind]; ok {
+			for _, do := range actions {
+				do(d, ev.Data)
+			}
+		}
+	}
+
+	warn(ErrEventChannelHasClosed)
+}
+
 // Hub is an isolated system for communication among member EventResponders
 // An EventResponder should only belong to a single Hub at any given time.
 // Hub does not interact with messages at all.
@@ -102,10 +164,12 @@ type Hub struct {
 	subscriptions map[string]SubscriptionSet
 }
 
-// NewHub creates a new Hub with a unique name.
+// NewHub creates a new Hub with a unique name. If the ID is already in use
+// NewHub returns the hub with that ID as well as ErrDuplicateHubID
 func NewHub(id string) (*Hub, error) {
 	if _, ok := hubs[id]; ok {
-		return nil, ErrDuplicateHubID
+		// TODO testcase for ErrDuplicate with h returned
+		return hubs[id], ErrDuplicateHubID
 	}
 
 	h := &Hub{}

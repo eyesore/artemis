@@ -151,7 +151,7 @@ func ParseJSONMessage(m []byte) (*ParsedMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	if kind, ok = pm["name"]; !ok {
+	if kind, ok = pm["kind"]; !ok {
 		return nil, ErrUnparseableMessage
 	}
 	output := NewParsedMessage(kind.(string), pm, m)

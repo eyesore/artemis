@@ -3,6 +3,8 @@ package artemis
 import "net/http"
 
 type Client struct {
+	ID string
+
 	Messages *MessageAgent
 	Events   *EventAgent
 }
@@ -31,4 +33,12 @@ func (c *Client) Join(families ...*Family) {
 	for _, f := range families {
 		f.Add(c)
 	}
+}
+
+func (c *Client) Leave(f *Family) {
+	f.Remove(c)
+}
+
+func (c *Client) BelongsTo(f *Family) bool {
+	return f.hasMember(c)
 }

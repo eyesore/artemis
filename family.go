@@ -32,6 +32,10 @@ func (f *Family) PushMessage(m []byte, messageType int) {
 	}
 }
 
+func (f *Family) hasMember(d Delegate) bool {
+	return f.Events.hasMember(d) || f.Messages.hasMember(d)
+}
+
 type messageSubscriber struct {
 	subscribers   map[MessageDelegate]struct{}
 	subscriptions map[string]MessageHandlerSet
@@ -48,6 +52,7 @@ func (ms *messageSubscriber) Add(d MessageDelegate) {
 			agent.Subscribe(kind, h)
 		}
 	}
+	ms.subscribers[d] = struct{}{}
 }
 
 func (ms *messageSubscriber) Remove(d MessageDelegate) {
@@ -81,6 +86,11 @@ func (ms *messageSubscriber) Unsubscribe(kind string, do MessageHandler) {
 	for sub := range ms.subscribers {
 		sub.MessageAgent().Unsubscribe(kind, do)
 	}
+}
+
+func (ms *messageSubscriber) hasMember(d MessageDelegate) bool {
+	_, ok := ms.subscribers[d]
+	return ok
 }
 
 type eventSubscriber struct {
@@ -133,4 +143,9 @@ func (es *eventSubscriber) Unsubscribe(kind string, do EventHandler) {
 	for sub := range es.subscribers {
 		sub.EventAgent().Unsubscribe(kind, do)
 	}
+}
+
+func (es *eventSubscriber) hasMember(d EventDelegate) bool {
+	_, ok := es.subscribers[d]
+	return ok
 }

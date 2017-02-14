@@ -13,7 +13,11 @@ func newEvent(kind string, data DataGetter) *Event {
 	e := &Event{}
 
 	e.Kind = kind
-	e.Data = data.Data()
+	if data != nil {
+		e.Data = data.Data()
+	} else {
+		e.Data = nil
+	}
 
 	return e
 }

@@ -39,7 +39,11 @@ var (
 	ErrHubMismatch = errors.New("Unable to add a client to a family in a different hub.")
 
 	// ErrDuplicateClient occurs when a client ID matches an existing client ID in the family on join.
-	ErrDuplicateClient = errors.New("Tried to add a duplicate client to family.")
+	ErrDuplicateDelegate = errors.New("Tried to add a duplicate delegate to family.")
+
+	ErrNoDelegates = errors.New("Tried to remove a delegate from a family, but it wasn't a member.")
+
+	ErrNoSubscriptions = errors.New("Tried to remove a subscription to a message agent with no subscriptions of that kind.")
 
 	// ErrAlreadySubscribed occurs when trying to add an event handler to a Responder that already has one.
 	ErrAlreadySubscribed = errors.New("Trying to add duplicate event to responder.")
@@ -47,18 +51,42 @@ var (
 	// ErrUnparseableMessage indicates that a message does not contain some expected data.
 	ErrUnparseableMessage = errors.New("The message parser does not recognize the message format.")
 
+	// TODO enumerate what type etc.
+	ErrBadMessageType = errors.New("Tried to send message with unrecognized type.")
+
 	// ErrDuplicateAction means that a MessageResponder is already listening to perform the same action
 	// in response to the same message
-	ErrDuplicateAction = errors.New("An action already exists for that event or message name.")
+	ErrDuplicateHandler = errors.New("An action already exists for that event or message name.")
 
 	ErrIllegalPingTimeout = errors.New("pingPeriod must be shorter than pongTimeout")
 
 	ErrEventChannelHasClosed = errors.New("This client is no longer receiving events.")
 
+	// TODO ID agent, provide IsLostConnError()
+	ErrMessageConnectionLost = errors.New("A message agent has lost its connection.")
+
 	ErrNoSubscribers = errors.New("Hub fired event but no one is listening.")
 
 	errNotYetImplemented = errors.New("You are trying to use a feature that has not been implemented yet.")
 )
+
+type MessageDelegate interface {
+	MessageAgent() *MessageAgent
+}
+
+type EventDelegate interface {
+	EventAgent() *EventAgent
+}
+
+type Delegate interface {
+	EventDelegate
+	MessageDelegate
+}
+
+// MessagePusher can send a message over an existing WS connection
+type MessagePusher interface {
+	PushMessage([]byte, int)
+}
 
 // initialize logging to STDOUT
 // TODO, setuplogger and allow override
@@ -112,19 +140,33 @@ func SetPongTimeout(n time.Duration) error {
 	return nil
 }
 
-// ParseJSONMessage parses a Message from a byte stream if possible.
-func ParseJSONMessage(m []byte) (*Message, error) {
-	var messageName interface{}
-	var ok bool
+// ParseJSONMessage parses a ParsedMessage containing JSON data from bytes if possible.
+func ParseJSONMessage(m []byte) (*ParsedMessage, error) {
+	var (
+		kind interface{}
+		ok   bool
+	)
 	pm := make(map[string]interface{})
 	err := json.Unmarshal(m, &pm)
 	if err != nil {
 		return nil, err
 	}
-	if messageName, ok = pm["name"]; !ok {
+	if kind, ok = pm["name"]; !ok {
 		return nil, ErrUnparseableMessage
 	}
-	mdg := &Message{messageName.(string), pm, m}
+	output := NewParsedMessage(kind.(string), pm, m)
 
-	return mdg, err
+	return output, err
+}
+
+type SubscriptionSet map[chan *Event]struct{}
+
+func (ss SubscriptionSet) Add(c chan *Event) {
+	if _, ok := ss[c]; !ok {
+		ss[c] = struct{}{}
+	}
+}
+
+func (ss SubscriptionSet) Remove(c chan *Event) {
+	delete(ss, c)
 }

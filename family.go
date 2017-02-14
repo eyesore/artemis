@@ -1,126 +1,136 @@
 package artemis
 
-import "fmt"
-
-// Family is a category for clients.  It provides a convenient way to subscribe a group
-// of clients that should function similarly to the same events and messages.
-// Importantly, the Family only passes events directly to member Clients to handle themselves.
+// Family is group of Agents and AgentDelegates (both Message and Event type).
+// Families can subscribe all of their members to handle messages and/or events.
+// The family is "dumb" - no handling happens here.
 type Family struct {
-	H *Hub
+	Hub *Hub
 
-	// TODO - keys can probably be client refs... no need for ID?
-	Clients              map[string]*Client
-	messageSubscriptions map[string]MessageResponseSet
-	eventSubscriptions   map[string]EventResponseSet
+	Messages messageSubscriber
+	Events   eventSubscriber
 }
 
 // NewFamily creates a new instance of Family and adds it to a hub.
-func NewFamily(h *Hub) *Family {
-	if h == nil {
-		h = DefaultHub()
-	}
-
-	f := &Family{}
-	f.Clients = make(map[string]*Client)
-	f.messageSubscriptions = make(map[string]MessageResponseSet)
-	f.eventSubscriptions = make(map[string]EventResponseSet)
-	h.Add(f)
-
-	return f
+func NewFamily() *Family {
+	return DefaultHub().NewFamily()
 }
 
-// JoinHub implements EventResponder
-func (f *Family) JoinHub(h *Hub) {
-	f.H = h
+func (f *Family) Add(d Delegate) {
+	f.Messages.Add(d)
+	f.Events.Add(d)
 }
 
-// OnMessage implements MessageListener
-func (f *Family) OnMessage(kind string, do MessageResponse) {
-	if _, ok := f.messageSubscriptions[kind]; !ok {
-		f.messageSubscriptions[kind] = make(MessageResponseSet)
-	}
-	f.messageSubscriptions[kind].Add(do)
-	for _, c := range f.Clients {
-		c.OnMessage(kind, do)
-	}
-}
-
-// OffMessage implements MessageListener
-func (f *Family) OffMessage(kind string, do MessageResponse) {
-	if actions, ok := f.messageSubscriptions[kind]; ok {
-		actions.Remove(do)
-	}
-	for _, c := range f.Clients {
-		c.OffMessage(kind, do)
-	}
-}
-
-// OnEvent implements EventResponder
-func (f *Family) OnEvent(kind string, do EventResponse) {
-	if _, ok := f.eventSubscriptions[kind]; !ok {
-		f.eventSubscriptions[kind] = make(EventResponseSet)
-	}
-	f.eventSubscriptions[kind].Add(do)
-	for _, c := range f.Clients {
-		c.OnEvent(kind, do)
-	}
-}
-
-// OffEvent implements EventResponder
-func (f *Family) OffEvent(kind string, do EventResponse) {
-	delete(f.eventSubscriptions, kind)
-	for _, c := range f.Clients {
-		c.OffEvent(kind, do)
-	}
+func (f *Family) Remove(d Delegate) {
+	f.Messages.Remove(d)
+	f.Events.Remove(d)
 }
 
 // PushMessage implements MessagePusher
 func (f *Family) PushMessage(m []byte, messageType int) {
-	for _, c := range f.Clients {
-		c.PushMessage(m, messageType)
+	for d := range f.Messages.subscribers {
+		d.MessageAgent().PushMessage(m, messageType)
 	}
 }
 
-func (f *Family) add(c *Client) {
-	// don't do anything if the client already exists here
-	if _, ok := f.Clients[c.ID]; ok {
-		warn(ErrDuplicateClient)
+type messageSubscriber struct {
+	subscribers   map[MessageDelegate]struct{}
+	subscriptions map[string]MessageHandlerSet
+}
+
+func (ms *messageSubscriber) Add(d MessageDelegate) {
+	if _, ok := ms.subscribers[d]; ok {
+		warn(ErrDuplicateDelegate)
 		return
 	}
-
-	for kind, actions := range f.messageSubscriptions {
-		for _, do := range actions {
-			c.OnMessage(kind, do)
+	agent := d.MessageAgent()
+	for kind, handlers := range ms.subscriptions {
+		for _, h := range handlers {
+			agent.Subscribe(kind, h)
 		}
 	}
-	for kind, actions := range f.eventSubscriptions {
-		for _, do := range actions {
-			c.OnEvent(kind, do)
-		}
-	}
-	f.Clients[c.ID] = c
 }
 
-func (f *Family) remove(c *Client) {
-	if _, ok := f.Clients[c.ID]; !ok {
-		warn(fmt.Errorf("Trying to remove non-member client from family."))
+func (ms *messageSubscriber) Remove(d MessageDelegate) {
+	if _, ok := ms.subscribers[d]; !ok {
+		warn(ErrNoDelegates)
 		return
 	}
-
-	for kind, actions := range f.eventSubscriptions {
-		for _, do := range actions {
-			c.OffEvent(kind, do)
+	agent := d.MessageAgent()
+	for kind, handlers := range ms.subscriptions {
+		for _, h := range handlers {
+			agent.Unsubscribe(kind, h)
 		}
 	}
-	for kind, actions := range f.messageSubscriptions {
-		for _, do := range actions {
-			c.OffMessage(kind, do)
-		}
-	}
-	delete(f.Clients, c.ID)
+	delete(ms.subscribers, d)
 }
 
-func (f *Family) hasMember(c *Client) bool {
-	_, ok := f.Clients[c.ID]
-	return ok
+func (ms *messageSubscriber) Subscribe(kind string, do MessageHandler) {
+	if _, ok := ms.subscriptions[kind]; !ok {
+		ms.subscriptions[kind] = make(MessageHandlerSet)
+	}
+	ms.subscriptions[kind].Add(do)
+	for sub := range ms.subscribers {
+		sub.MessageAgent().Subscribe(kind, do)
+	}
+}
+
+func (ms *messageSubscriber) Unsubscribe(kind string, do MessageHandler) {
+	if handlers, ok := ms.subscriptions[kind]; ok {
+		handlers.Remove(do)
+	}
+	for sub := range ms.subscribers {
+		sub.MessageAgent().Unsubscribe(kind, do)
+	}
+}
+
+type eventSubscriber struct {
+	subscribers   map[EventDelegate]struct{}
+	subscriptions map[string]EventHandlerSet
+}
+
+func (es *eventSubscriber) Add(d EventDelegate) {
+	if _, ok := es.subscribers[d]; ok {
+		warn(ErrDuplicateDelegate)
+		return
+	}
+	agent := d.EventAgent()
+	for kind, handlers := range es.subscriptions {
+		for _, h := range handlers {
+			agent.Subscribe(kind, h)
+		}
+	}
+	es.subscribers[d] = struct{}{}
+}
+
+func (es *eventSubscriber) Remove(d EventDelegate) {
+	if _, ok := es.subscribers[d]; !ok {
+		warn(ErrNoDelegates)
+		return
+	}
+	agent := d.EventAgent()
+	for kind, handlers := range es.subscriptions {
+		for _, h := range handlers {
+			agent.Unsubscribe(kind, h)
+		}
+	}
+	delete(es.subscribers, d)
+}
+
+func (es *eventSubscriber) Subscribe(kind string, do EventHandler) {
+	if _, ok := es.subscriptions[kind]; !ok {
+		es.subscriptions[kind] = make(EventHandlerSet)
+	}
+	es.subscriptions[kind].Add(do)
+	for sub := range es.subscribers {
+		sub.EventAgent().Subscribe(kind, do)
+	}
+}
+
+func (es *eventSubscriber) Unsubscribe(kind string, do EventHandler) {
+	if handlers, ok := es.subscriptions[kind]; ok {
+		handlers.Remove(do)
+	}
+	for sub := range es.subscribers {
+		sub.EventAgent().Unsubscribe(kind, do)
+	}
 }

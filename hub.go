@@ -3,6 +3,7 @@ package artemis
 import (
 	"errors"
 	"fmt"
+	"net/http"
 )
 
 var (
@@ -18,149 +19,79 @@ var (
 	ErrDuplicateHubID = errors.New("A hub with that ID already exists.")
 )
 
-// EventResponder can respond to an event by doing an MessageResponse
-type EventResponder interface {
-	JoinHub(*Hub)
-	OnEvent(string, EventResponse)
-	OffEvent(string, EventResponse)
-}
+// type DefaultEventResponder struct {
+// 	H                  *Hub
+// 	responder          interface{}
+// 	events             chan Event
+// 	readyForEvents     bool
+// 	eventSubscriptions map[string]EventResponseSet
+// }
 
-// Event contains information about a hub-wide event.
-type Event struct {
-	Kind string
-	Data DataGetter
-}
+// // JoinHub implements Event Responder
+// func (d *DefaultEventResponder) JoinHub(h *Hub) {
+// 	d.H = h
+// }
 
-// DataGetter gets data.
-type DataGetter interface {
-	Data() interface{}
-}
+// // OnEvent implements EventResponder
+// func (d *DefaultEventResponder) OnEvent(kind string, do EventResponse) {
+// 	if !d.readyForEvents {
+// 		// lazy launch goroutine for event listening
+// 		go d.startListening()
+// 	}
+// 	if _, ok := d.eventSubscriptions[kind]; !ok {
+// 		d.eventSubscriptions[kind] = make(EventResponseSet)
+// 	}
+// 	var responder interface{}
+// 	if d.responder != nil {
+// 		responder = d.responder
+// 	} else {
+// 		responder = d
+// 	}
 
-// EventData is a basic implementation of DataGetter
-type EventData struct {
-	data interface{}
-}
+// 	d.eventSubscriptions[kind].Add(do)
+// 	d.H.Subscribe(kind, d.events, responder)
+// }
 
-// Data implements DataGetter
-func (ed *EventData) Data() interface{} {
-	return ed.data
-}
+// // OffEvent implements EventResponder
+// func (d *DefaultEventResponder) OffEvent(kind string, do EventResponse) {
+// 	if actions, ok := d.eventSubscriptions[kind]; ok {
+// 		actions.Remove(do)
+// 	}
+// 	d.H.Unsubscribe(kind, d.events)
+// }
 
-// TODO differentiate from MessageResponse or consolidate
+// func (d *DefaultEventResponder) noEventSubscriptions() bool {
+// 	for _, responses := range d.eventSubscriptions {
+// 		if len(responses) > 0 {
+// 			return false
+// 		}
+// 	}
+// 	return true
+// }
 
-// EventResponse is a function that is executed in response to a message.
-type EventResponse func(EventResponder, DataGetter)
+// func (d *DefaultEventResponder) startListening() {
+// 	defer close(d.events)
+// 	d.readyForEvents = true
+// 	for {
+// 		ev, ok := <-d.events
+// 		if !ok {
+// 			break
+// 		}
+// 		if actions, ok := d.eventSubscriptions[ev.Kind]; ok {
+// 			for _, do := range actions {
+// 				do(d, ev.Data)
+// 			}
+// 		}
+// 	}
 
-// EventResponseSet stores a set of unique actions.  Comparison is based on string value of fn.
-type EventResponseSet map[string]EventResponse
-
-// EventResponderSet is predicated on being able to distinguish between functions to prevent
-// duplicate adds and to allow removal.  This proves difficult to do.
-// The go language spec states that functions are not comparable -
-// therefore, there is no guarantee that this technique will work in the future, or at all
-// Link: http://stackoverflow.com/a/42147285/1375316
-// TODO compare interfaces instead of fns?
-func getEventResponseKey(r EventResponse) string {
-	return fmt.Sprintf("%v", r)
-}
-
-// Add puts a new EventResponse into the set.  Warns asynchronously if r is already in the set.
-func (ers EventResponseSet) Add(r EventResponse) {
-	key := getEventResponseKey(r)
-	if _, ok := ers[key]; ok {
-		warn(ErrDuplicateAction)
-		return
-	}
-	ers[key] = r
-}
-
-// Remove ensures that EventResponse "a" is no longer present in the EventResponseSet
-func (ers EventResponseSet) Remove(r EventResponse) {
-	key := getEventResponseKey(r)
-	// if key is not there, doesn't matter
-	delete(ers, key)
-}
-
-type SubscriptionSet map[chan Event]struct{}
-
-func (ss SubscriptionSet) Add(c chan Event) {
-	if _, ok := ss[c]; !ok {
-		ss[c] = struct{}{}
-	}
-}
-
-func (ss SubscriptionSet) Remove(c chan Event) {
-	delete(ss, c)
-}
-
-type DefaultEventResponder struct {
-	ID                 string
-	H                  *Hub
-	events             chan Event
-	readyForEvents     bool
-	eventSubscriptions map[string]EventResponseSet
-}
-
-// JoinHub implements Event Responder
-func (d *DefaultEventResponder) JoinHub(h *Hub) {
-	d.H = h
-}
-
-// OnEvent implements EventResponder
-func (d *DefaultEventResponder) OnEvent(kind string, do EventResponse) {
-	if !d.readyForEvents {
-		// lazy launch goroutine for event listening
-		go d.startListening()
-	}
-	if _, ok := d.eventSubscriptions[kind]; !ok {
-		d.eventSubscriptions[kind] = make(EventResponseSet)
-	}
-
-	d.eventSubscriptions[kind].Add(do)
-	d.H.Subscribe(kind, d.events)
-}
-
-// OffEvent implements EventResponder
-func (d *DefaultEventResponder) OffEvent(kind string, do EventResponse) {
-	if actions, ok := d.eventSubscriptions[kind]; ok {
-		actions.Remove(do)
-	}
-	d.H.Unsubscribe(kind, d.events)
-}
-
-func (d *DefaultEventResponder) noEventSubscriptions() bool {
-	for _, responses := range d.eventSubscriptions {
-		if len(responses) > 0 {
-			return false
-		}
-	}
-	return true
-}
-
-func (d *DefaultEventResponder) startListening() {
-	defer close(d.events)
-	d.readyForEvents = true
-	for {
-		ev, ok := <-d.events
-		if !ok {
-			break
-		}
-		if actions, ok := d.eventSubscriptions[ev.Kind]; ok {
-			for _, do := range actions {
-				do(d, ev.Data)
-			}
-		}
-	}
-
-	warn(ErrEventChannelHasClosed)
-}
+// 	warn(ErrEventChannelHasClosed)
+// }
 
 // Hub is an isolated system for communication among member EventResponders
 // An EventResponder should only belong to a single Hub at any given time.
 // Hub does not interact with messages at all.
 type Hub struct {
 	ID            string
-	members       []EventResponder // used for push? IDK they don't have to be EventResponders
 	subscriptions map[string]SubscriptionSet
 }
 
@@ -174,7 +105,6 @@ func NewHub(id string) (*Hub, error) {
 
 	h := &Hub{}
 	h.ID = id
-	h.members = make([]EventResponder, 0)
 	h.subscriptions = make(map[string]SubscriptionSet)
 	hubs[id] = h
 
@@ -188,7 +118,6 @@ func DefaultHub() *Hub {
 	if defaultHub == nil {
 		defaultHub = &Hub{
 			defaultHubID,
-			make([]EventResponder, 0),
 			make(map[string]SubscriptionSet),
 		}
 	}
@@ -196,21 +125,73 @@ func DefaultHub() *Hub {
 	return defaultHub
 }
 
-// Add places a Responder into the hub.  All events that the hub receives will be
-func (h *Hub) Add(r EventResponder) {
-	r.JoinHub(h)
+func (h *Hub) NewClient(w http.ResponseWriter, r *http.Request) (c *Client, err error) {
+	c = &Client{}
+
+	c.Messages, err = h.NewMessageAgent(w, r)
+	if err != nil {
+		return nil, err
+	}
+	c.Events = h.NewEventAgent()
+
+	return
+}
+
+func (h *Hub) NewFamily() *Family {
+	f := &Family{}
+	f.Hub = h
+
+	f.Messages = messageSubscriber{
+		make(map[MessageDelegate]struct{}),
+		make(map[string]MessageHandlerSet),
+	}
+	f.Events = eventSubscriber{
+		make(map[EventDelegate]struct{}),
+		make(map[string]EventHandlerSet),
+	}
+
+	return f
+}
+
+func (h *Hub) NewEventAgent() *EventAgent {
+	a := &EventAgent{}
+	a.Hub = h
+	a.events = make(chan *Event, 256)
+	a.ready = false
+	a.subscriptions = make(map[string]EventHandlerSet)
+
+	return a
+}
+
+// TODO tj - this should be protocol agnostic - for now, just pass in the http params
+func (h *Hub) NewMessageAgent(w http.ResponseWriter, r *http.Request) (*MessageAgent, error) {
+	agent := &MessageAgent{}
+	err := agent.connect(w, r)
+	if err != nil {
+		return nil, err
+	}
+	agent.Hub = h
+
+	agent.sendText = make(chan []byte, 256)
+	agent.sendBinary = make(chan []byte, 256)
+	agent.subscriptions = make(map[string]MessageHandlerSet)
+
+	return agent, nil
 }
 
 // PushMessage implements MessagePusher
-func (h *Hub) PushMessage(m []byte, messageType int) {
+// func (h *Hub) PushMessage(m []byte, messageType int) {
 
-}
+// }
 
-// Fire tells a hub to inform all subscribers of the event
-func (h *Hub) Fire(eventKind string, data DataGetter) {
+// Broadcast informs all subscribed listeners to eventKind of the event.  Source is optionally
+// available as source of the event, and can be nil.
+func (h *Hub) Broadcast(eventKind string, data DataGetter, source interface{}) {
 	if subscribers, ok := h.subscriptions[eventKind]; ok {
 		for sub := range subscribers {
-			sub <- Event{eventKind, data}
+			e := newEvent(eventKind, data)
+			e.Source = source
+			sub <- e
 		}
 	} else {
 		warn(fmt.Errorf("Hub fired event of kind '%s' but no one was listening.", eventKind))
@@ -218,7 +199,7 @@ func (h *Hub) Fire(eventKind string, data DataGetter) {
 }
 
 // Subscribe sets up a subscriptions to a named event, events will be sent over the channel
-func (h *Hub) Subscribe(kind string, c chan Event) {
+func (h *Hub) subscribe(kind string, c chan *Event) {
 	if _, ok := h.subscriptions[kind]; !ok {
 		h.subscriptions[kind] = make(SubscriptionSet)
 	}
@@ -226,11 +207,10 @@ func (h *Hub) Subscribe(kind string, c chan Event) {
 	h.subscriptions[kind].Add(c)
 }
 
-func (h *Hub) Unsubscribe(kind string, c chan Event) {
+func (h *Hub) unsubscribe(kind string, c chan *Event) {
 	if _, ok := h.subscriptions[kind]; ok {
 		h.subscriptions[kind].Remove(c)
 	}
 }
 
-// TODO remove responder from hub
 // TODO hub graceful destruction

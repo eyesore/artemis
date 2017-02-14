@@ -23,7 +23,9 @@ var (
 // An EventResponder should only belong to a single Hub at any given time.
 // Hub does not interact with messages at all.
 type Hub struct {
-	ID            string
+	ID string
+
+	families      map[string]*Family
 	subscriptions map[string]SubscriptionSet
 }
 
@@ -50,6 +52,7 @@ func DefaultHub() *Hub {
 	if defaultHub == nil {
 		defaultHub = &Hub{
 			defaultHubID,
+			make(map[string]*Family),
 			make(map[string]SubscriptionSet),
 		}
 	}
@@ -71,7 +74,10 @@ func (h *Hub) NewClient(w http.ResponseWriter, r *http.Request) (c *Client, err 
 	return
 }
 
-func (h *Hub) NewFamily() *Family {
+func (h *Hub) NewFamily(id string) *Family {
+	if _, ok := h.families[id]; ok {
+		return h.families[id]
+	}
 	f := &Family{}
 	f.Hub = h
 
@@ -83,6 +89,7 @@ func (h *Hub) NewFamily() *Family {
 		make(map[EventDelegate]struct{}),
 		make(map[string]EventHandlerSet),
 	}
+	h.families[id] = f
 
 	return f
 }

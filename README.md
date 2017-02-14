@@ -2,8 +2,7 @@
 ## Built on top of gorilla/websocket, to be expanded to support other real time protocols
 
 Use Artemis to manage server-side WS (for now) connections.
-Create clients, and group them into families and hubs.  Add listeners for events and messages on a per-client
-or per-family basis.
+Create agents to receive both ws messages and artemis-generated events within an isolated hub.  Respond to these events with the agents themselves or with delegated objects of your own.
 
 # This information is outdated (since always) - leaving in case some ideas need to be reviewed/used
 # Updated README coming soon.

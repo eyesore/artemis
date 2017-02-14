@@ -4,6 +4,7 @@ package artemis
 // Families can subscribe all of their members to handle messages and/or events.
 // The family is "dumb" - no handling happens here.
 type Family struct {
+	ID  string
 	Hub *Hub
 
 	Messages messageSubscriber
@@ -11,8 +12,8 @@ type Family struct {
 }
 
 // NewFamily creates a new instance of Family and adds it to a hub.
-func NewFamily() *Family {
-	return DefaultHub().NewFamily()
+func NewFamily(id string) *Family {
+	return DefaultHub().NewFamily(id)
 }
 
 func (f *Family) Add(d Delegate) {

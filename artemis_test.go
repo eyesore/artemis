@@ -48,11 +48,11 @@ func createTestClients(t *testing.T, id string, h *Hub) (client *websocket.Conn,
 	return
 }
 
-func createTestFamily(t *testing.T, h *Hub) *Family {
+func createTestFamily(t *testing.T, id string, h *Hub) *Family {
 	if h == nil {
 		h = DefaultHub()
 	}
-	return h.NewFamily()
+	return h.NewFamily(id)
 }
 
 func createTestHub(t *testing.T, id string) *Hub {
@@ -220,7 +220,7 @@ func TestHubIsolation(t *testing.T) {
 }
 
 func TestFamilyResponse(t *testing.T) {
-	f1 := createTestFamily(t, nil)
+	f1 := createTestFamily(t, "f1", nil)
 	_, c1 := createTestClients(t, "c1", nil)
 	_, c2 := createTestClients(t, "c2", nil)
 	ch := make(chan interface{})
@@ -250,9 +250,9 @@ func TestFamilyLeaveUnsubscribe(t *testing.T) {
 	_, c1 := createTestClients(t, "c1", nil)
 	// not necessessary to fire from a separate client, just testing this case
 	_, c2 := createTestClients(t, "c2", nil)
-	f1 := createTestFamily(t, nil)
-	f2 := createTestFamily(t, nil)
-	f3 := createTestFamily(t, nil)
+	f1 := createTestFamily(t, "f1", nil)
+	f2 := createTestFamily(t, "f2", nil)
+	f3 := createTestFamily(t, "f3", nil)
 	e1 := "e1"
 	e2 := "e2"
 	e3 := "e3"
@@ -306,8 +306,8 @@ func TestFamilyLeaveUnsubscribe(t *testing.T) {
 // current expected behavior is for the listener to only be added once.
 func TestDifferentFamilySameListener(t *testing.T) {
 	_, c1 := createTestClients(t, "c1", nil)
-	f1 := createTestFamily(t, nil)
-	f2 := createTestFamily(t, nil)
+	f1 := createTestFamily(t, "f1", nil)
+	f2 := createTestFamily(t, "f2", nil)
 	ch := make(chan interface{})
 
 	c1.Join(f1, f2)
@@ -335,8 +335,8 @@ func TestNonsubscribers(t *testing.T) {
 	_, c2 := createTestClients(t, "c2", nil)
 	_, c3 := createTestClients(t, "c3", nil)
 	_, c4 := createTestClients(t, "c4", nil)
-	f1 := createTestFamily(t, nil)
-	f2 := createTestFamily(t, nil)
+	f1 := createTestFamily(t, "f1", nil)
+	f2 := createTestFamily(t, "f2", nil)
 	f1Event := "f1"
 	f2Event := "f2"
 	c1and3Event := "c1c3"
@@ -422,9 +422,9 @@ func TestOffEvent(t *testing.T) {
 func TestFamilyClientHubMismatch(t *testing.T) {
 	t.Skip("Skipping ClientHubMismatch test.  Re-evaluating expected behavior")
 	// h1 := createTestHub(t, "h1")
-	// f1 := createTestFamily(t, h1)
-	// f2 := createTestFamily(t, nil)
-	// f3 := createTestFamily(t, nil)
+	// f1 := createTestFamily(t, "f1",  h1)
+	// f2 := createTestFamily(t, "f2", nil)
+	// f3 := createTestFamily(t, "f3", nil)
 	// _, c1 := createTestClients(t, "c1", nil)
 
 	// // err, _ := <-Errors, c1.Join(f1); err != ErrHubMismatch {
@@ -449,8 +449,8 @@ func TestFamilyClientHubMismatch(t *testing.T) {
 
 func TestFamilyJoinLeave(t *testing.T) {
 	_, c1 := createTestClients(t, "c1", nil)
-	f1 := createTestFamily(t, nil)
-	f2 := createTestFamily(t, nil)
+	f1 := createTestFamily(t, "f1", nil)
+	f2 := createTestFamily(t, "f2", nil)
 
 	c1.Join(f1, f2)
 	if !c1.BelongsTo(f1) || !c1.BelongsTo(f2) {
@@ -516,7 +516,7 @@ func TestOffMessage(t *testing.T) {
 
 func TestFamilyOnMessage(t *testing.T) {
 	incoming, c1 := createTestClients(t, "c1", nil)
-	f1 := createTestFamily(t, nil)
+	f1 := createTestFamily(t, "f1", nil)
 	messageName := "testMessage"
 	ch := make(chan interface{})
 	c1.Join(f1)
@@ -542,7 +542,7 @@ func TestFamilyOnMessage(t *testing.T) {
 
 func TestFamilyOnMessageRetro(t *testing.T) {
 	incoming, c1 := createTestClients(t, "c1", nil)
-	f1 := createTestFamily(t, nil)
+	f1 := createTestFamily(t, "f1", nil)
 	messageName := "testMessage"
 	ch := make(chan interface{})
 
@@ -567,7 +567,7 @@ func TestFamilyOnMessageRetro(t *testing.T) {
 
 func TestFamilyOffMessage(t *testing.T) {
 	incoming, c1 := createTestClients(t, "c1", nil)
-	f1 := createTestFamily(t, nil)
+	f1 := createTestFamily(t, "f1", nil)
 	messageName := "testMessage"
 	ch := make(chan interface{})
 	cb1 := func(m *Message) {
